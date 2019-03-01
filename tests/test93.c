@@ -74,7 +74,7 @@ int main(int argc, char *argv[])
         printf("fatal not called after table creation failure\n");
     }
 
-    user = init_user(4); /* hash must create OK */
+    user = init_user(5); /* hash must create OK */
     if (is_fatal) {
         printf("fatal error when creating hash normally\n");
         /* bad idea to continue running */
@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
 
     /* let's add users until expansion fails */
     users = 0;
-    malloc_cnt = 4;
+    malloc_cnt = 5;
     while (1) {
         user = (example_user_t*)malloc(sizeof(example_user_t));
         user->id = user_id;

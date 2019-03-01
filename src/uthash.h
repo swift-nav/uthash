@@ -92,6 +92,82 @@ typedef unsigned char uint8_t;
 #define uthash_strlen(s) strlen(s)
 #endif
 
+#define BUCKET_BLOCK_SIZE (4096)
+#define MAX_BUCKETS_PER_BLOCK (BUCKET_BLOCK_SIZE/sizeof(struct UT_hash_bucket))
+
+#define uthash_malloc_buckets(num_buckets, bucket_blocks)                        \
+  do {                                                                           \
+    size_t x = 0, xx = 0;                                                        \
+    int malloc_fail = 0;                                                         \
+    size_t size = (num_buckets) * sizeof(struct UT_hash_bucket);                 \
+    size_t num_blocks = size / BUCKET_BLOCK_SIZE;                                \
+    size_t overflow = size - (num_blocks * MAX_BUCKETS_PER_BLOCK);               \
+    size_t blk_ptr_cnt = overflow == 0 ? num_blocks : num_blocks + 1;            \
+    (void) blk_ptr_cnt;                                                          \
+    *(bucket_blocks) = uthash_malloc(blk_ptr_cnt * sizeof(struct UT_hash_bucket*)); \
+    if (!*(bucket_blocks)) { break; }                                            \
+    for (; x < num_blocks; x++) {                                                \
+      (*(bucket_blocks))[x] = uthash_malloc(MAX_BUCKETS_PER_BLOCK * sizeof(struct UT_hash_bucket)); \
+      if (!((*(bucket_blocks))[x])) { malloc_fail = 1; break; }                  \
+    }                                                                            \
+    if (malloc_fail) {                                                           \
+      for (xx = 0; xx < x; xx++) {                                               \
+        uthash_free((bucket_blocks)[xx], MAX_BUCKETS_PER_BLOCK * sizeof(struct UT_hash_bucket)); \
+      }                                                                          \
+      uthash_free(*(bucket_blocks), blk_ptr_cnt * sizeof(struct UT_hash_bucket*)); \
+      *(bucket_blocks) = NULL;                                                   \
+      break;                                                                     \
+    }                                                                            \
+    if (overflow != 0) {                                                         \
+      (*(bucket_blocks))[x] = uthash_malloc(overflow * sizeof(struct UT_hash_bucket)); \
+      if (!((*(bucket_blocks))[x])) { malloc_fail = 1; }                         \
+    }                                                                            \
+    if (malloc_fail) {                                                           \
+      for (xx = 0; xx < x; xx++) {                                               \
+        uthash_free((bucket_blocks)[xx], MAX_BUCKETS_PER_BLOCK * sizeof(struct UT_hash_bucket)); \
+      }                                                                          \
+      uthash_free(*(bucket_blocks), blk_ptr_cnt * sizeof(struct UT_hash_bucket*)); \
+      *(bucket_blocks) = NULL;                                                   \
+      break;                                                                     \
+    }                                                                            \
+  } while (0);
+
+#define uthash_bzero_buckets(num_buckets, bucket_blocks)                         \
+  do {                                                                           \
+    size_t x = 0;                                                                \
+    size_t size = (num_buckets) * sizeof(struct UT_hash_bucket);                 \
+    size_t num_blocks = size / BUCKET_BLOCK_SIZE;                                \
+    size_t overflow = size - (num_blocks * MAX_BUCKETS_PER_BLOCK);               \
+    for (; x < num_blocks; x++) {                                                \
+      uthash_bzero((bucket_blocks)[x], MAX_BUCKETS_PER_BLOCK * sizeof(struct UT_hash_bucket)); \
+    }                                                                            \
+    if (overflow != 0) {                                                         \
+      uthash_bzero((bucket_blocks)[x], overflow * sizeof(struct UT_hash_bucket)); \
+    }                                                                            \
+  } while (0);
+
+#define uthash_free_buckets(num_buckets, bucket_blocks)                          \
+  do {                                                                           \
+    size_t x = 0;                                                                \
+    size_t size = (num_buckets) * sizeof(struct UT_hash_bucket);                 \
+    size_t num_blocks = size / BUCKET_BLOCK_SIZE;                                \
+    size_t overflow = size - (num_blocks * MAX_BUCKETS_PER_BLOCK);               \
+    size_t blk_ptr_cnt = overflow == 0 ? num_blocks : num_blocks + 1;            \
+    (void) blk_ptr_cnt;                                                          \
+    for (; x < num_blocks; x++) {                                                \
+      uthash_free((bucket_blocks)[x], MAX_BUCKETS_PER_BLOCK * sizeof(struct UT_hash_bucket)); \
+    }                                                                            \
+    if (overflow != 0) {                                                         \
+      uthash_free((bucket_blocks)[x], overflow * sizeof(struct UT_hash_bucket)); \
+    }                                                                            \
+    uthash_free((bucket_blocks), blk_ptr_cnt * sizeof(struct UT_hash_bucket*));  \
+  } while (0);
+
+#define _bkt_at(bucket_blocks, idx)                                              \
+  ((bucket_blocks)[(idx) / MAX_BUCKETS_PER_BLOCK][(idx) % MAX_BUCKETS_PER_BLOCK])
+
+#define HASH_BUCKET_AT _bkt_at
+
 #ifdef uthash_memcmp
 /* This warning will not catch programs that define uthash_memcmp AFTER including uthash.h. */
 #warning "uthash_memcmp is deprecated; please use HASH_KEYCMP instead"
@@ -151,7 +227,7 @@ do {                                                                            
   struct UT_hash_handle *_hd_hh_item = (itemptrhh);                              \
   unsigned _hd_bkt;                                                              \
   HASH_TO_BKT(_hd_hh_item->hashv, (head)->hh.tbl->num_buckets, _hd_bkt);         \
-  (head)->hh.tbl->buckets[_hd_bkt].count++;                                      \
+  _bkt_at((head)->hh.tbl->buckets, _hd_bkt).count++;                             \
   _hd_hh_item->hh_next = NULL;                                                   \
   _hd_hh_item->hh_prev = NULL;                                                   \
 } while (0)
@@ -168,7 +244,7 @@ do {                                                                            
     unsigned _hf_bkt;                                                            \
     HASH_TO_BKT(hashval, (head)->hh.tbl->num_buckets, _hf_bkt);                  \
     if (HASH_BLOOM_TEST((head)->hh.tbl, hashval) != 0) {                         \
-      HASH_FIND_IN_BKT((head)->hh.tbl, hh, (head)->hh.tbl->buckets[ _hf_bkt ], keyptr, keylen, hashval, out); \
+      HASH_FIND_IN_BKT((head)->hh.tbl, hh, _bkt_at((head)->hh.tbl->buckets, _hf_bkt), keyptr, keylen, hashval, out); \
     }                                                                            \
   }                                                                              \
 } while (0)
@@ -228,20 +304,17 @@ do {                                                                            
     (head)->hh.tbl->num_buckets = HASH_INITIAL_NUM_BUCKETS;                      \
     (head)->hh.tbl->log2_num_buckets = HASH_INITIAL_NUM_BUCKETS_LOG2;            \
     (head)->hh.tbl->hho = (char*)(&(head)->hh) - (char*)(head);                  \
-    (head)->hh.tbl->buckets = (UT_hash_bucket*)uthash_malloc(                    \
-        HASH_INITIAL_NUM_BUCKETS * sizeof(struct UT_hash_bucket));               \
+    uthash_malloc_buckets(HASH_INITIAL_NUM_BUCKETS, &(head)->hh.tbl->buckets)    \
     (head)->hh.tbl->signature = HASH_SIGNATURE;                                  \
     if (!(head)->hh.tbl->buckets) {                                              \
       HASH_RECORD_OOM(oomed);                                                    \
       uthash_free((head)->hh.tbl, sizeof(UT_hash_table));                        \
     } else {                                                                     \
-      uthash_bzero((head)->hh.tbl->buckets,                                      \
-          HASH_INITIAL_NUM_BUCKETS * sizeof(struct UT_hash_bucket));             \
+      uthash_bzero_buckets(HASH_INITIAL_NUM_BUCKETS, (head)->hh.tbl->buckets);   \
       HASH_BLOOM_MAKE((head)->hh.tbl, oomed);                                    \
       IF_HASH_NONFATAL_OOM(                                                      \
         if (oomed) {                                                             \
-          uthash_free((head)->hh.tbl->buckets,                                   \
-              HASH_INITIAL_NUM_BUCKETS*sizeof(struct UT_hash_bucket));           \
+          uthash_free_buckets(HASH_INITIAL_NUM_BUCKETS, (head)->hh.tbl->buckets);\
           uthash_free((head)->hh.tbl, sizeof(UT_hash_table));                    \
         }                                                                        \
       )                                                                          \
@@ -324,7 +397,7 @@ do {                                                                            
     unsigned _ha_bkt;                                                            \
     (head)->hh.tbl->num_items++;                                                 \
     HASH_TO_BKT(hashval, (head)->hh.tbl->num_buckets, _ha_bkt);                  \
-    HASH_ADD_TO_BKT((head)->hh.tbl->buckets[_ha_bkt], hh, &(add)->hh, oomed);    \
+    HASH_ADD_TO_BKT(_bkt_at((head)->hh.tbl->buckets, _ha_bkt), hh, &(add)->hh, oomed); \
     if (oomed) {                                                                 \
       HASH_ROLLBACK_BKT(hh, head, &(add)->hh);                                   \
       HASH_DELETE_HH(hh, head, &(add)->hh);                                      \
@@ -347,7 +420,7 @@ do {                                                                            
   unsigned _ha_bkt;                                                              \
   (head)->hh.tbl->num_items++;                                                   \
   HASH_TO_BKT(hashval, (head)->hh.tbl->num_buckets, _ha_bkt);                    \
-  HASH_ADD_TO_BKT((head)->hh.tbl->buckets[_ha_bkt], hh, &(add)->hh, oomed);      \
+  HASH_ADD_TO_BKT(_bkt_at((head)->hh.tbl->buckets, _ha_bkt), hh, &(add)->hh, oomed); \
   HASH_BLOOM_ADD((head)->hh.tbl, hashval);                                       \
   HASH_EMIT_KEY(hh, head, keyptr, keylen_in);                                    \
 } while (0)
@@ -460,8 +533,8 @@ do {                                                                            
   struct UT_hash_handle *_hd_hh_del = (delptrhh);                                \
   if ((_hd_hh_del->prev == NULL) && (_hd_hh_del->next == NULL)) {                \
     HASH_BLOOM_FREE((head)->hh.tbl);                                             \
-    uthash_free((head)->hh.tbl->buckets,                                         \
-                (head)->hh.tbl->num_buckets * sizeof(struct UT_hash_bucket));    \
+    uthash_free_buckets((head)->hh.tbl->num_buckets,                             \
+                        (head)->hh.tbl->buckets);                                \
     uthash_free((head)->hh.tbl, sizeof(UT_hash_table));                          \
     (head) = NULL;                                                               \
   } else {                                                                       \
@@ -478,7 +551,7 @@ do {                                                                            
       HH_FROM_ELMT((head)->hh.tbl, _hd_hh_del->next)->prev = _hd_hh_del->prev;   \
     }                                                                            \
     HASH_TO_BKT(_hd_hh_del->hashv, (head)->hh.tbl->num_buckets, _hd_bkt);        \
-    HASH_DEL_IN_BKT((head)->hh.tbl->buckets[_hd_bkt], _hd_hh_del);               \
+    HASH_DEL_IN_BKT(_bkt_at((head)->hh.tbl->buckets, _hd_bkt), _hd_hh_del);      \
     (head)->hh.tbl->num_items--;                                                 \
   }                                                                              \
   HASH_FSCK(hh, head, "HASH_DELETE_HH");                                         \
@@ -529,7 +602,7 @@ do {                                                                            
     char *_prev;                                                                 \
     for (_bkt_i = 0; _bkt_i < (head)->hh.tbl->num_buckets; ++_bkt_i) {           \
       unsigned _bkt_count = 0;                                                   \
-      _thh = (head)->hh.tbl->buckets[_bkt_i].hh_head;                            \
+      _thh = _bkt_at((head)->hh.tbl->buckets, _bkt_i).hh_head;                   \
       _prev = NULL;                                                              \
       while (_thh) {                                                             \
         if (_prev != (char*)(_thh->hh_prev)) {                                   \
@@ -541,9 +614,9 @@ do {                                                                            
         _thh = _thh->hh_next;                                                    \
       }                                                                          \
       _count += _bkt_count;                                                      \
-      if ((head)->hh.tbl->buckets[_bkt_i].count !=  _bkt_count) {                \
+      if (_bkt_at((head)->hh.tbl->buckets, _bkt_i).count !=  _bkt_count) {       \
         HASH_OOPS("%s: invalid bucket count %u, actual %u\n",                    \
-            (where), (head)->hh.tbl->buckets[_bkt_i].count, _bkt_count);         \
+            (where), _bkt_at((head)->hh.tbl->buckets, _bkt_i).count, _bkt_count); \
       }                                                                          \
     }                                                                            \
     if (_count != (head)->hh.tbl->num_items) {                                   \
@@ -925,24 +998,23 @@ do {                                                                            
   unsigned _he_bkt;                                                              \
   unsigned _he_bkt_i;                                                            \
   struct UT_hash_handle *_he_thh, *_he_hh_nxt;                                   \
-  UT_hash_bucket *_he_new_buckets, *_he_newbkt;                                  \
-  _he_new_buckets = (UT_hash_bucket*)uthash_malloc(                              \
-           2UL * (tbl)->num_buckets * sizeof(struct UT_hash_bucket));            \
+  UT_hash_bucket **_he_new_buckets, *_he_newbkt;                                 \
+  uthash_malloc_buckets(2UL * (tbl)->num_buckets,                                \
+                        &_he_new_buckets);                                       \
   if (!_he_new_buckets) {                                                        \
     HASH_RECORD_OOM(oomed);                                                      \
   } else {                                                                       \
-    uthash_bzero(_he_new_buckets,                                                \
-        2UL * (tbl)->num_buckets * sizeof(struct UT_hash_bucket));               \
+    uthash_bzero_buckets(2UL * (tbl)->num_buckets, _he_new_buckets);             \
     (tbl)->ideal_chain_maxlen =                                                  \
        ((tbl)->num_items >> ((tbl)->log2_num_buckets+1U)) +                      \
        ((((tbl)->num_items & (((tbl)->num_buckets*2U)-1U)) != 0U) ? 1U : 0U);    \
     (tbl)->nonideal_items = 0;                                                   \
     for (_he_bkt_i = 0; _he_bkt_i < (tbl)->num_buckets; _he_bkt_i++) {           \
-      _he_thh = (tbl)->buckets[ _he_bkt_i ].hh_head;                             \
+      _he_thh = _bkt_at((tbl)->buckets, _he_bkt_i).hh_head;                      \
       while (_he_thh != NULL) {                                                  \
         _he_hh_nxt = _he_thh->hh_next;                                           \
         HASH_TO_BKT(_he_thh->hashv, (tbl)->num_buckets * 2U, _he_bkt);           \
-        _he_newbkt = &(_he_new_buckets[_he_bkt]);                                \
+        _he_newbkt = &(_bkt_at(_he_new_buckets, _he_bkt));                       \
         if (++(_he_newbkt->count) > (tbl)->ideal_chain_maxlen) {                 \
           (tbl)->nonideal_items++;                                               \
           if (_he_newbkt->count > _he_newbkt->expand_mult * (tbl)->ideal_chain_maxlen) { \
@@ -958,7 +1030,7 @@ do {                                                                            
         _he_thh = _he_hh_nxt;                                                    \
       }                                                                          \
     }                                                                            \
-    uthash_free((tbl)->buckets, (tbl)->num_buckets * sizeof(struct UT_hash_bucket)); \
+    uthash_free_buckets((tbl)->num_buckets, (tbl)->buckets);                     \
     (tbl)->num_buckets *= 2U;                                                    \
     (tbl)->log2_num_buckets++;                                                   \
     (tbl)->buckets = _he_new_buckets;                                            \
@@ -1074,7 +1146,7 @@ do {                                                                            
   ptrdiff_t _dst_hho = ((char*)(&(dst)->hh_dst) - (char*)(dst));                 \
   if ((src) != NULL) {                                                           \
     for (_src_bkt=0; _src_bkt < (src)->hh_src.tbl->num_buckets; _src_bkt++) {    \
-      for (_src_hh = (src)->hh_src.tbl->buckets[_src_bkt].hh_head;               \
+      for (_src_hh = _bkt_at((src)->hh_src.tbl->buckets, _src_bkt).hh_head;      \
         _src_hh != NULL;                                                         \
         _src_hh = _src_hh->hh_next) {                                            \
         _elt = ELMT_FROM_HH((src)->hh_src.tbl, _src_hh);                         \
@@ -1103,7 +1175,7 @@ do {                                                                            
             _dst_hh->tbl = (dst)->hh_dst.tbl;                                    \
           }                                                                      \
           HASH_TO_BKT(_dst_hh->hashv, _dst_hh->tbl->num_buckets, _dst_bkt);      \
-          HASH_ADD_TO_BKT(_dst_hh->tbl->buckets[_dst_bkt], hh_dst, _dst_hh, _hs_oomed); \
+          HASH_ADD_TO_BKT(_bkt_at(_dst_hh->tbl->buckets, _dst_bkt), hh_dst, _dst_hh, _hs_oomed); \
           (dst)->hh_dst.tbl->num_items++;                                        \
           IF_HASH_NONFATAL_OOM(                                                  \
             if (_hs_oomed) {                                                     \
@@ -1128,8 +1200,7 @@ do {                                                                            
 do {                                                                             \
   if ((head) != NULL) {                                                          \
     HASH_BLOOM_FREE((head)->hh.tbl);                                             \
-    uthash_free((head)->hh.tbl->buckets,                                         \
-                (head)->hh.tbl->num_buckets*sizeof(struct UT_hash_bucket));      \
+    uthash_free_buckets((head)->hh.tbl->num_buckets, (head)->hh.tbl->buckets);   \
     uthash_free((head)->hh.tbl, sizeof(UT_hash_table));                          \
     (head) = NULL;                                                               \
   }                                                                              \
@@ -1181,7 +1252,7 @@ typedef struct UT_hash_bucket {
 #define HASH_BLOOM_SIGNATURE 0xb12220f2u
 
 typedef struct UT_hash_table {
-   UT_hash_bucket *buckets;
+   UT_hash_bucket **buckets;
    unsigned num_buckets, log2_num_buckets;
    unsigned num_items;
    struct UT_hash_handle *tail; /* tail hh in app order, for fast append    */

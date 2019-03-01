@@ -71,7 +71,7 @@ static void hash_chain_len_histogram(const UT_hash_table *tbl)
     double pct = 100.0/(double)tbl->num_buckets;
     memset(bkt_hist,0,sizeof(bkt_hist));
     for(i=0; i < tbl->num_buckets; i++) {
-        unsigned count = tbl->buckets[i].count;
+        unsigned count = HASH_BUCKET_AT(tbl->buckets, i).count;
         if (count == 0U) {
             bkt_hist[CHAIN_0]++;
         } else if (count < 5U) {
